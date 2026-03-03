@@ -1,5 +1,5 @@
 """
-vcita Tomorrow Appointments → Slack
+vcita Tomorrow Appointments -> Slack
 Runs daily at 7pm ET. Counts tomorrow's scheduled appointments and posts to Slack.
 """
 
@@ -19,7 +19,8 @@ ET = ZoneInfo("America/New_York")
 
 VCITA_TOKEN = os.environ.get("VCITA_TOKEN")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
-VCITA_API_BASE = "https://api.vcita.biz/v2"
+VCITA_API_BASE = "https://api.vcita.biz/platform/v1/scheduling"
+PER_PAGE = 25
 
 
 def vcita_get(endpoint, params=None):
@@ -47,49 +48,55 @@ def get_tomorrow_appointments():
     now_et = datetime.now(ET)
     tomorrow = now_et + timedelta(days=1)
 
-    # Tomorrow midnight to midnight in UTC for the API query
-    tomorrow_start = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_end = tomorrow.replace(hour=23, minute=59, second=59, microsecond=0)
+    # Tomorrow's date boundaries in UTC
+    tomorrow_start = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    tomorrow_end = tomorrow.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
 
-    start_utc = tomorrow_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    end_utc = tomorrow_end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    all_appointments = []
-    page = 0
+    tomorrow_appointments = []
+    page = 1
 
     while True:
         log.info(f"Fetching appointments page {page}...")
         data = vcita_get("/appointments", {
-            "updated_since": start_utc,
-            "updated_until": end_utc,
+            "per_page": str(PER_PAGE),
             "page": str(page),
+            "sort": "start_time",
+            "order": "desc",
         })
 
-        appointments = data.get("data", data.get("appointments", []))
+        appointments = data.get("data", {}).get("appointments", [])
 
         if not appointments:
             break
 
-        all_appointments.extend(appointments)
+        for appt in appointments:
+            start_str = appt.get("start_time", "")
+            if not start_str:
+                continue
 
-        # vCita paginates at 25 per page
-        if len(appointments) < 25:
+            # Parse start_time (comes as ISO 8601 UTC)
+            start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+
+            # If appointment is before tomorrow, we are done (sorted desc)
+            if start_utc < tomorrow_start:
+                log.info("Reached appointments before tomorrow. Stopping.")
+                return tomorrow_appointments, tomorrow
+
+            # If appointment is within tomorrow's window
+            if tomorrow_start <= start_utc <= tomorrow_end:
+                state = (appt.get("state") or "").lower()
+                no_show = appt.get("no_show", False)
+
+                # Only count scheduled/confirmed appointments
+                if state not in ("cancelled", "canceled") and not no_show:
+                    tomorrow_appointments.append(appt)
+
+        next_page = data.get("data", {}).get("next_page")
+        if not next_page:
             break
-        page += 1
+        page = next_page
 
-    log.info(f"Fetched {len(all_appointments)} total appointment records")
-    return all_appointments, tomorrow
-
-
-def filter_scheduled(appointments):
-    """Filter to only scheduled/confirmed appointments (exclude cancelled, no-shows)."""
-    excluded_statuses = {"cancelled", "canceled", "no_show", "noshow", "deleted"}
-    scheduled = []
-    for appt in appointments:
-        status = (appt.get("status") or "").lower().replace(" ", "_")
-        if status not in excluded_statuses:
-            scheduled.append(appt)
-    return scheduled
+    return tomorrow_appointments, tomorrow
 
 
 def send_slack_message(msg):
@@ -110,13 +117,11 @@ def main():
         sys.exit(1)
 
     appointments, tomorrow = get_tomorrow_appointments()
-    scheduled = filter_scheduled(appointments)
-    total = len(scheduled)
+    total = len(appointments)
 
     tomorrow_label = tomorrow.strftime("%A, %b %-d")
-    day_of_week = tomorrow.strftime("%A")
 
-    msg = f"""📅 *vCita Appointments — {tomorrow_label}*
+    msg = f"""📅 *vCita Appointments -- {tomorrow_label}*
 
 *Tomorrow's Scheduled Appointments: {total}*"""
 
