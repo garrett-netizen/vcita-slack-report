@@ -9,8 +9,10 @@ Deploy as 4 separate Railway cron services, each with a different STAFF_NAME env
   - Garrett Thompson
   - Diana Vetere
 
-Stagger cron schedules 3 minutes apart to avoid rate limiting.
-A separate consolidation script reads the channel and posts the final report.
+Env vars needed:
+  - VCITA_TOKEN: vCita API bearer token
+  - STAFF_NAME: one of the 4 names above
+  - DUMP_WEBHOOK_URL: Slack incoming webhook for #vcita-data-dump
 """
 
 import os
@@ -29,11 +31,9 @@ log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 
 VCITA_TOKEN = (os.environ.get("VCITA_TOKEN") or "").strip()
-SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
+DUMP_WEBHOOK_URL = os.environ.get("DUMP_WEBHOOK_URL")
 STAFF_NAME = (os.environ.get("STAFF_NAME") or "").strip()
 VCITA_API_BASE = "https://api.vcita.biz/platform/v1/scheduling"
-
-DUMP_CHANNEL = "C0ALPMX1D1S"  # #vcita-data-dump
 
 STAFF_IDS = {
     "Ramsay Poindexter": "qr87s9jbo5zwyruq",
@@ -110,7 +110,6 @@ def get_staff_appointments(staff_name, staff_id, target_start, target_end):
         if not next_page:
             break
         page = next_page
-        time.sleep(0.3)
 
     elapsed = int(time.time() - t0)
     log.info(f"  {staff_name}: {len(matched)} match(es), {page} pages, {elapsed}s")
@@ -121,8 +120,8 @@ def main():
     if not VCITA_TOKEN:
         log.error("VCITA_TOKEN not set")
         sys.exit(1)
-    if not SLACK_WEBHOOK_URL:
-        log.error("SLACK_WEBHOOK_URL not set")
+    if not DUMP_WEBHOOK_URL:
+        log.error("DUMP_WEBHOOK_URL not set")
         sys.exit(1)
     if not STAFF_NAME:
         log.error("STAFF_NAME not set")
@@ -139,15 +138,13 @@ def main():
 
     target_start = target.astimezone(timezone.utc)
     target_end = target.replace(hour=23, minute=59, second=59).astimezone(timezone.utc)
-    target_label = target.strftime("%A, %b %-d")
     target_date = target.strftime("%Y-%m-%d")
 
-    log.info(f"Target: {target_label}")
+    log.info(f"Target: {target_date}")
     log.info(f"Staff: {STAFF_NAME} ({staff_id})")
 
     matches = get_staff_appointments(STAFF_NAME, staff_id, target_start, target_end)
 
-    # Post structured result to #vcita-data-dump
     result = {
         "source": "vcita",
         "staff": STAFF_NAME,
@@ -157,9 +154,9 @@ def main():
     }
 
     dump_msg = f"vcita|{target_date}|{STAFF_NAME}|{json.dumps(result)}"
-    slack_post(SLACK_WEBHOOK_URL, dump_msg)
+    slack_post(DUMP_WEBHOOK_URL, dump_msg)
 
-    log.info(f"Posted to Slack: {len(matches)} match(es) for {STAFF_NAME} on {target_date}")
+    log.info(f"Posted to #vcita-data-dump: {len(matches)} match(es) for {STAFF_NAME} on {target_date}")
     log.info("Done.")
 
 
