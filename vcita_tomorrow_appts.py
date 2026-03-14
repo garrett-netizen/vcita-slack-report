@@ -1,6 +1,6 @@
 """
-Final test: Ramsay Poindexter, March 19, 2026.
-Query by staff_id only. Paginate all pages. Filter to 2026-03-19 in code.
+Brute force: Ramsay Poindexter, every single appointment, find March 19 2026.
+No date filters. No sort tricks. Just paginate everything.
 """
 
 import os
@@ -21,7 +21,9 @@ VCITA_TOKEN = (os.environ.get("VCITA_TOKEN") or "").strip()
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 VCITA_API_BASE = "https://api.vcita.biz/platform/v1/scheduling"
 
-RAMSAY_STAFF_ID = "qr87s9jbo5zwyruq"
+RAMSAY = "qr87s9jbo5zwyruq"
+
+INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
 
 
 def vcita_get(endpoint, params=None):
@@ -55,50 +57,55 @@ def main():
     target_start = target.astimezone(timezone.utc)
     target_end = target.replace(hour=23, minute=59, second=59).astimezone(timezone.utc)
 
-    log.info(f"Target: 2026-03-19 (UTC: {target_start} to {target_end})")
-    log.info(f"Staff: Ramsay Poindexter ({RAMSAY_STAFF_ID})")
+    log.info(f"Target: 2026-03-19 UTC: {target_start} to {target_end}")
+    log.info(f"Staff: Ramsay ({RAMSAY})")
+    log.info("Brute forcing every page. No limits.")
 
-    all_appts = []
+    matched = []
+    total_fetched = 0
     page = 1
-    max_pages = 100
 
-    while page <= max_pages:
-        log.info(f"Fetching page {page}...")
+    while True:
+        if page % 25 == 0:
+            log.info(f"Progress: page {page}, fetched {total_fetched}, matches {len(matched)}")
+
         data = vcita_get("/appointments", {
             "per_page": "25",
             "page": str(page),
-            "staff_id": RAMSAY_STAFF_ID,
+            "staff_id": RAMSAY,
         })
 
         appts = data.get("data", {}).get("appointments", [])
-        log.info(f"Page {page}: {len(appts)} appointments")
-
         if not appts:
+            log.info(f"Empty page at {page}. Done.")
             break
+
+        total_fetched += len(appts)
 
         for a in appts:
             start_str = a.get("start_time", "")
             if not start_str:
                 continue
             start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-
             if target_start <= start_utc <= target_end:
                 title = a.get("title", "")
                 state = (a.get("state") or "").lower()
-                log.info(f"  IN WINDOW: {title} | {start_str} | state={state}")
-                all_appts.append(a)
+                no_show = a.get("no_show", False)
+                log.info(f"FOUND: {title} | {start_str} | state={state} | no_show={no_show}")
+                if title in INCLUDED_TITLES and state not in ("cancelled", "canceled") and not no_show:
+                    matched.append(a)
+                    log.info(f"  -> MATCHED")
 
         next_page = data.get("data", {}).get("next_page")
         if not next_page:
-            log.info("No more pages.")
+            log.info(f"No next_page at page {page}. Done.")
             break
         page = next_page
 
-    log.info(f"Total Ramsay appointments on 2026-03-19: {len(all_appts)}")
-    for a in all_appts:
-        log.info(f"  {a.get('title')} | {a.get('start_time')}")
+    log.info(f"FINAL: {len(matched)} matches out of {total_fetched} total Ramsay appointments across {page} pages")
 
-    payload = json.dumps({"text": f"Ramsay March 19 test: {len(all_appts)} appointments found. Check deploy logs."}).encode()
+    msg = f"Ramsay brute force: {len(matched)} Tinnitus Relief Consultation(s) on March 19. Scanned {total_fetched} appointments across {page} pages."
+    payload = json.dumps({"text": msg}).encode()
     req = Request(SLACK_WEBHOOK_URL, data=payload)
     req.add_header("Content-Type", "application/json")
     with urlopen(req) as resp:
