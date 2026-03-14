@@ -39,7 +39,7 @@ STAFF_IDS = {
     "Ramsay Poindexter": "qr87s9jbo5zwyruq",
     "Ben Thompson": "dgj09ekwfjtj0r59",
     "Garrett Thompson": "w2bdnhp0nwkbxaz4",
-    "Diana Vetere": "nqk7nya8tvbo1qp6",
+    "Diana Vetere": "nqk7nya8tvbol9p6",
 }
 
 INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
