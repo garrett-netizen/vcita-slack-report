@@ -1,5 +1,5 @@
 """
-Staff ID dump: 20 pages, no staff filter, log every unique staff name/ID.
+Find Diana's staff_id. Paginate until we see her name. Stop immediately when found.
 """
 
 import os
@@ -42,25 +42,38 @@ def main():
 
     staff = {}
     page = 1
-    while page <= 20:
+    found_diana = False
+
+    while True:
+        if page % 25 == 0:
+            log.info(f"Page {page}, staff found so far: {len(staff)}")
+
         d = vcita_get("/appointments", {"per_page": "25", "page": str(page)})
         if not d:
             break
         appts = d.get("data", {}).get("appointments", [])
         if not appts:
             break
+
         for a in appts:
-            name = a.get("staff_display_name", "?")
-            sid = a.get("staff_id", "?")
-            if name not in staff:
+            name = a.get("staff_display_name", "")
+            sid = a.get("staff_id", "")
+            if name and name not in staff:
                 staff[name] = sid
-                log.info(f"NEW STAFF: {name} -> {sid}")
+                log.info(f"NEW: {name} -> {sid}")
+                if "diana" in name.lower() or "vetere" in name.lower():
+                    found_diana = True
+
+        if found_diana:
+            log.info("Found Diana. Stopping.")
+            break
+
         next_page = d.get("data", {}).get("next_page")
         if not next_page:
             break
         page = next_page
 
-    log.info(f"=== ALL STAFF ({len(staff)}) ===")
+    log.info(f"=== ALL STAFF ({len(staff)}) after {page} pages ===")
     for name, sid in sorted(staff.items()):
         log.info(f"  {name} -> {sid}")
 
