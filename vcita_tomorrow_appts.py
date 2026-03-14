@@ -9,6 +9,8 @@ Deploy as 4 separate Railway cron services, each with a different STAFF_NAME env
   - Garrett Thompson
   - Diana Vetere
 
+Cron: 6:30am ET (10:30 UTC) = 30 10 * * *
+
 Env vars needed:
   - VCITA_TOKEN: vCita API bearer token
   - STAFF_NAME: one of the 4 names above
@@ -132,15 +134,14 @@ def main():
 
     staff_id = STAFF_IDS[STAFF_NAME]
     now_et = datetime.now(ET)
+    tomorrow = now_et + timedelta(days=1)
 
-    # TEMP: Override to Thursday March 19 for testing. Revert to tomorrow after test.
-    target = now_et.replace(year=2026, month=3, day=19, hour=0, minute=0, second=0, microsecond=0)
-
+    target = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
     target_start = target.astimezone(timezone.utc)
     target_end = target.replace(hour=23, minute=59, second=59).astimezone(timezone.utc)
     target_date = target.strftime("%Y-%m-%d")
 
-    log.info(f"Target: {target_date}")
+    log.info(f"Target: {target_date} (tomorrow)")
     log.info(f"Staff: {STAFF_NAME} ({staff_id})")
 
     matches = get_staff_appointments(STAFF_NAME, staff_id, target_start, target_end)
