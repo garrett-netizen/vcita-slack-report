@@ -1,6 +1,6 @@
 """
 vcita Tomorrow Appointments -> Slack
-Runs daily at 7pm ET. Counts tomorrow's scheduled appointments and posts to Slack.
+DEBUG VERSION: Logging raw pagination data to diagnose why we stop at page 1.
 """
 
 import os
@@ -26,7 +26,6 @@ INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
 
 
 def vcita_get(endpoint, params=None):
-    """Make an authenticated GET request to vCita API."""
     url = f"{VCITA_API_BASE}{endpoint}"
     if params:
         query = "&".join(f"{k}={v}" for k, v in params.items())
@@ -46,86 +45,6 @@ def vcita_get(endpoint, params=None):
         raise
 
 
-def get_appointments_for_date(target):
-    """Fetch all matching appointments for a specific date (ET)."""
-    target_start = target.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    target_end = target.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
-
-    log.info(f"Target window (UTC): {target_start} to {target_end}")
-
-    all_in_window = []
-    page = 1
-    max_pages = 50
-
-    while page <= max_pages:
-        log.info(f"Fetching page {page}...")
-        data = vcita_get("/appointments", {
-            "per_page": str(PER_PAGE),
-            "page": str(page),
-            "sort": "start_time",
-            "order": "desc",
-        })
-
-        appointments = data.get("data", {}).get("appointments", [])
-        log.info(f"Page {page}: {len(appointments)} appointments")
-
-        if not appointments:
-            break
-
-        earliest_on_page = None
-
-        for appt in appointments:
-            start_str = appt.get("start_time", "")
-            if not start_str:
-                continue
-
-            start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-
-            if earliest_on_page is None or start_utc < earliest_on_page:
-                earliest_on_page = start_utc
-
-            if target_start <= start_utc <= target_end:
-                all_in_window.append(appt)
-
-        log.info(f"Page {page} earliest: {earliest_on_page}")
-        log.info(f"Running matches so far: {len(all_in_window)}")
-
-        if earliest_on_page and earliest_on_page < target_start:
-            log.info("Earliest on page is before target start. Done paginating.")
-            break
-
-        next_page = data.get("data", {}).get("next_page")
-        if not next_page:
-            log.info("No more pages.")
-            break
-        page = next_page
-
-    matched = []
-    for appt in all_in_window:
-        state = (appt.get("state") or "").lower()
-        no_show = appt.get("no_show", False)
-        title = appt.get("title", "")
-
-        if state in ("cancelled", "canceled") or no_show:
-            continue
-        if title not in INCLUDED_TITLES:
-            continue
-
-        matched.append(appt)
-        log.info(f"MATCHED: {title} | {appt.get('start_time')} | {appt.get('staff_display_name')}")
-
-    return matched
-
-
-def send_slack_message(msg):
-    """Post a message to Slack via incoming webhook."""
-    payload = json.dumps({"text": msg}).encode()
-    req = Request(SLACK_WEBHOOK_URL, data=payload)
-    req.add_header("Content-Type", "application/json")
-    with urlopen(req) as resp:
-        return resp.status
-
-
 def main():
     if not VCITA_TOKEN:
         log.error("VCITA_TOKEN not set")
@@ -134,23 +53,59 @@ def main():
         log.error("SLACK_WEBHOOK_URL not set")
         sys.exit(1)
 
-    now_et = datetime.now(ET)
+    # Just fetch page 1 and dump all the metadata
+    log.info("Fetching page 1 with per_page=100, sort=start_time, order=desc...")
+    data = vcita_get("/appointments", {
+        "per_page": "100",
+        "page": "1",
+        "sort": "start_time",
+        "order": "desc",
+    })
 
-    # TEMP: Override to Wednesday March 18 for testing. Revert to tomorrow after test.
-    target = now_et.replace(year=2026, month=3, day=18, hour=0, minute=0, second=0, microsecond=0)
+    # Log the top-level keys (not appointments themselves)
+    top_level = {k: v for k, v in data.items() if k != "data"}
+    log.info(f"Top-level keys (non-data): {json.dumps(top_level)}")
 
-    appointments = get_appointments_for_date(target)
-    total = len(appointments)
+    inner = data.get("data", {})
+    appts = inner.get("appointments", [])
+    inner_meta = {k: v for k, v in inner.items() if k != "appointments"}
+    log.info(f"Inner data keys (non-appointments): {json.dumps(inner_meta)}")
+    log.info(f"Appointment count: {len(appts)}")
 
-    target_label = target.strftime("%A, %b %-d")
+    if appts:
+        first = appts[0].get("start_time", "?")
+        last = appts[-1].get("start_time", "?")
+        log.info(f"First appt start_time: {first}")
+        log.info(f"Last appt start_time: {last}")
 
-    msg = f"""📅 *Tinnitus Relief Discovery Calls -- {target_label}*
+    # Now fetch page 2 explicitly
+    log.info("Fetching page 2...")
+    data2 = vcita_get("/appointments", {
+        "per_page": "100",
+        "page": "2",
+        "sort": "start_time",
+        "order": "desc",
+    })
 
-*{total} discovery calls scheduled for tomorrow.*"""
+    inner2 = data2.get("data", {})
+    appts2 = inner2.get("appointments", [])
+    inner_meta2 = {k: v for k, v in inner2.items() if k != "appointments"}
+    log.info(f"Page 2 inner meta: {json.dumps(inner_meta2)}")
+    log.info(f"Page 2 appointment count: {len(appts2)}")
 
-    log.info(f"Sending to Slack:\n{msg}")
-    status = send_slack_message(msg)
-    log.info(f"Slack response: {status}")
+    if appts2:
+        first2 = appts2[0].get("start_time", "?")
+        last2 = appts2[-1].get("start_time", "?")
+        log.info(f"Page 2 first appt start_time: {first2}")
+        log.info(f"Page 2 last appt start_time: {last2}")
+
+    # Send a simple test message
+    payload = json.dumps({"text": "DEBUG: pagination test complete. Check deploy logs."}).encode()
+    req = Request(SLACK_WEBHOOK_URL, data=payload)
+    req.add_header("Content-Type", "application/json")
+    with urlopen(req) as resp:
+        log.info(f"Slack response: {resp.status}")
+
     log.info("Done.")
 
 
