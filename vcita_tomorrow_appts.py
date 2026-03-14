@@ -4,13 +4,14 @@ Runs daily at 7pm ET. Counts tomorrow's Tinnitus Relief Discovery Calls and post
 
 Brute forces all appointments per staff member (vCita API has no reliable
 date filtering or sort). Filters to target date + matching titles in code.
-~60-90 seconds per staff member, ~4-6 minutes total.
+Small delay between API calls to avoid Cloudflare rate limiting.
 """
 
 import os
 import sys
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from urllib.request import Request, urlopen
@@ -34,6 +35,8 @@ STAFF = {
 
 INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
 
+API_DELAY = 0.3  # seconds between API calls
+
 
 def vcita_get(endpoint, params=None):
     url = f"{VCITA_API_BASE}{endpoint}"
@@ -45,7 +48,7 @@ def vcita_get(endpoint, params=None):
     req.add_header("Content-Type", "application/json")
     req.add_header("User-Agent", "Mozilla/5.0")
     try:
-        with urlopen(req) as resp:
+        with urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
     except HTTPError as e:
         body = e.read().decode() if e.fp else ""
@@ -57,10 +60,12 @@ def get_staff_appointments(staff_name, staff_id, target_start, target_end):
     """Brute force all appointments for one staff member, return matches in target window."""
     matched = []
     page = 1
+    t0 = time.time()
 
     while True:
         if page % 50 == 0:
-            log.info(f"  {staff_name}: page {page}...")
+            elapsed = int(time.time() - t0)
+            log.info(f"  {staff_name}: page {page}... ({elapsed}s)")
 
         data = vcita_get("/appointments", {
             "per_page": "25",
@@ -91,8 +96,10 @@ def get_staff_appointments(staff_name, staff_id, target_start, target_end):
         if not next_page:
             break
         page = next_page
+        time.sleep(API_DELAY)
 
-    log.info(f"  {staff_name}: {len(matched)} match(es), {page} pages scanned")
+    elapsed = int(time.time() - t0)
+    log.info(f"  {staff_name}: {len(matched)} match(es), {page} pages, {elapsed}s")
     return matched
 
 
@@ -124,12 +131,17 @@ def main():
     log.info(f"Target: {target_label} (UTC: {target_start} to {target_end})")
 
     all_matched = []
+    total_start = time.time()
+
     for name, sid in STAFF.items():
         log.info(f"Scanning {name}...")
         matches = get_staff_appointments(name, sid, target_start, target_end)
         all_matched.extend(matches)
 
+    total_elapsed = int(time.time() - total_start)
     total = len(all_matched)
+
+    log.info(f"Total: {total} matches, {total_elapsed}s elapsed")
 
     msg = f"""📅 *Tinnitus Relief Discovery Calls -- {target_label}*
 
