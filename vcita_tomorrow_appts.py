@@ -50,8 +50,8 @@ def get_target_appointments():
     """Fetch all appointments scheduled for the target day (ET)."""
     now_et = datetime.now(ET)
 
-    # TEMP: Override to Monday March 16 for testing. Revert to tomorrow after test.
-    target = now_et.replace(year=2026, month=3, day=16, hour=0, minute=0, second=0, microsecond=0)
+    # TEMP: Override to Tuesday March 17 for testing. Revert to tomorrow after test.
+    target = now_et.replace(year=2026, month=3, day=17, hour=0, minute=0, second=0, microsecond=0)
 
     # Target day boundaries in UTC
     target_start = target.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
