@@ -57,6 +57,8 @@ def get_target_appointments():
     target_start = target.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
     target_end = target.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
 
+    log.info(f"Target window: {target_start} to {target_end}")
+
     target_appointments = []
     page = 1
 
@@ -70,6 +72,7 @@ def get_target_appointments():
         })
 
         appointments = data.get("data", {}).get("appointments", [])
+        log.info(f"Page {page}: got {len(appointments)} appointments")
 
         if not appointments:
             break
@@ -81,6 +84,8 @@ def get_target_appointments():
 
             # Parse start_time (comes as ISO 8601 UTC)
             start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+
+            log.info(f"  {appt.get('title')} | {start_utc} | state={appt.get('state')}")
 
             # If appointment is before target day, we are done (sorted desc)
             if start_utc < target_start:
@@ -95,10 +100,12 @@ def get_target_appointments():
 
                 # Only count scheduled/confirmed consultations
                 if state not in ("cancelled", "canceled") and not no_show and title in INCLUDED_TITLES:
+                    log.info(f"  -> MATCHED: {title}")
                     target_appointments.append(appt)
 
         next_page = data.get("data", {}).get("next_page")
         if not next_page:
+            log.info("No more pages.")
             break
         page = next_page
 
