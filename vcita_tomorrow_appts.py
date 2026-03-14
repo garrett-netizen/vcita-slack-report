@@ -61,6 +61,7 @@ def get_target_appointments():
 
     target_appointments = []
     page = 1
+    passed_target = False
 
     while True:
         log.info(f"Fetching appointments page {page}...")
@@ -68,7 +69,7 @@ def get_target_appointments():
             "per_page": str(PER_PAGE),
             "page": str(page),
             "sort": "start_time",
-            "order": "asc",
+            "order": "desc",
         })
 
         appointments = data.get("data", {}).get("appointments", [])
@@ -84,14 +85,14 @@ def get_target_appointments():
 
             start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
 
-            # Skip anything before target day
-            if start_utc < target_start:
+            # Still above target window, skip
+            if start_utc > target_end:
                 continue
 
-            # Past target day, no need to keep going
-            if start_utc > target_end:
-                log.info("Passed target day. Stopping.")
-                return target_appointments, target
+            # Below target window, we're done
+            if start_utc < target_start:
+                passed_target = True
+                break
 
             # Within target day window
             state = (appt.get("state") or "").lower()
@@ -103,6 +104,10 @@ def get_target_appointments():
             if state not in ("cancelled", "canceled") and not no_show and title in INCLUDED_TITLES:
                 log.info(f"  -> MATCHED")
                 target_appointments.append(appt)
+
+        if passed_target:
+            log.info("Passed target window. Stopping.")
+            break
 
         next_page = data.get("data", {}).get("next_page")
         if not next_page:
