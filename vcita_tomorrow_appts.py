@@ -46,16 +46,18 @@ def vcita_get(endpoint, params=None):
         raise
 
 
-def get_tomorrow_appointments():
-    """Fetch all appointments scheduled for tomorrow (ET)."""
+def get_target_appointments():
+    """Fetch all appointments scheduled for the target day (ET)."""
     now_et = datetime.now(ET)
-    tomorrow = now_et + timedelta(days=1)
 
-    # Tomorrow's date boundaries in UTC
-    tomorrow_start = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    tomorrow_end = tomorrow.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
+    # TEMP: Override to Monday March 16 for testing. Revert to tomorrow after test.
+    target = now_et.replace(year=2026, month=3, day=16, hour=0, minute=0, second=0, microsecond=0)
 
-    tomorrow_appointments = []
+    # Target day boundaries in UTC
+    target_start = target.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    target_end = target.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
+
+    target_appointments = []
     page = 1
 
     while True:
@@ -80,27 +82,27 @@ def get_tomorrow_appointments():
             # Parse start_time (comes as ISO 8601 UTC)
             start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
 
-            # If appointment is before tomorrow, we are done (sorted desc)
-            if start_utc < tomorrow_start:
-                log.info("Reached appointments before tomorrow. Stopping.")
-                return tomorrow_appointments, tomorrow
+            # If appointment is before target day, we are done (sorted desc)
+            if start_utc < target_start:
+                log.info("Reached appointments before target day. Stopping.")
+                return target_appointments, target
 
-            # If appointment is within tomorrow's window
-            if tomorrow_start <= start_utc <= tomorrow_end:
+            # If appointment is within target day's window
+            if target_start <= start_utc <= target_end:
                 state = (appt.get("state") or "").lower()
                 no_show = appt.get("no_show", False)
                 title = appt.get("title", "")
 
                 # Only count scheduled/confirmed consultations
                 if state not in ("cancelled", "canceled") and not no_show and title in INCLUDED_TITLES:
-                    tomorrow_appointments.append(appt)
+                    target_appointments.append(appt)
 
         next_page = data.get("data", {}).get("next_page")
         if not next_page:
             break
         page = next_page
 
-    return tomorrow_appointments, tomorrow
+    return target_appointments, target
 
 
 def send_slack_message(msg):
@@ -120,12 +122,12 @@ def main():
         log.error("SLACK_WEBHOOK_URL not set")
         sys.exit(1)
 
-    appointments, tomorrow = get_tomorrow_appointments()
+    appointments, target = get_target_appointments()
     total = len(appointments)
 
-    tomorrow_label = tomorrow.strftime("%A, %b %-d")
+    target_label = target.strftime("%A, %b %-d")
 
-    msg = f"""📅 *Tinnitus Relief Discovery Calls -- {tomorrow_label}*
+    msg = f"""📅 *Tinnitus Relief Discovery Calls -- {target_label}*
 
 *{total} discovery calls scheduled for tomorrow.*"""
 
