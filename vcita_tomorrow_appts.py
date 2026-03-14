@@ -22,6 +22,8 @@ SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 VCITA_API_BASE = "https://api.vcita.biz/platform/v1/scheduling"
 PER_PAGE = 25
 
+INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
+
 
 def vcita_get(endpoint, params=None):
     """Make an authenticated GET request to vCita API."""
@@ -71,7 +73,6 @@ def get_tomorrow_appointments():
             break
 
         for appt in appointments:
-            log.info(json.dumps(appt, indent=2))
             start_str = appt.get("start_time", "")
             if not start_str:
                 continue
@@ -88,9 +89,10 @@ def get_tomorrow_appointments():
             if tomorrow_start <= start_utc <= tomorrow_end:
                 state = (appt.get("state") or "").lower()
                 no_show = appt.get("no_show", False)
+                title = appt.get("title", "")
 
-                # Only count scheduled/confirmed appointments
-                if state not in ("cancelled", "canceled") and not no_show:
+                # Only count scheduled/confirmed consultations
+                if state not in ("cancelled", "canceled") and not no_show and title in INCLUDED_TITLES:
                     tomorrow_appointments.append(appt)
 
         next_page = data.get("data", {}).get("next_page")
@@ -125,7 +127,7 @@ def main():
 
     msg = f"""📅 *vCita Appointments -- {tomorrow_label}*
 
-*Tomorrow's Scheduled Appointments: {total}*"""
+*Tomorrow's Scheduled Consultations: {total}*"""
 
     log.info(f"Sending to Slack:\n{msg}")
     status = send_slack_message(msg)
