@@ -57,13 +57,18 @@ def get_target_appointments():
     target_start = target.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
     target_end = target.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
 
-    log.info(f"Target window: {target_start} to {target_end}")
+    log.info(f"Target window (UTC): {target_start} to {target_end}")
 
-    target_appointments = []
+    # Step 1: Fetch ALL appointments into a flat list.
+    # The API doesn't support date filtering, so we paginate through everything.
+    # We sort descending so the newest are first, and stop once the entire page
+    # is older than our target window.
+    all_in_window = []
     page = 1
+    max_pages = 50  # safety valve
 
-    while True:
-        log.info(f"Fetching appointments page {page}...")
+    while page <= max_pages:
+        log.info(f"Fetching page {page}...")
         data = vcita_get("/appointments", {
             "per_page": str(PER_PAGE),
             "page": str(page),
@@ -72,12 +77,13 @@ def get_target_appointments():
         })
 
         appointments = data.get("data", {}).get("appointments", [])
-        log.info(f"Page {page}: got {len(appointments)} appointments")
+        log.info(f"Page {page}: {len(appointments)} appointments")
 
         if not appointments:
             break
 
-        found_before_target = False
+        # Track the earliest start_time on this page
+        earliest_on_page = None
 
         for appt in appointments:
             start_str = appt.get("start_time", "")
@@ -86,29 +92,20 @@ def get_target_appointments():
 
             start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
 
-            # After target window, skip
-            if start_utc > target_end:
-                continue
+            if earliest_on_page is None or start_utc < earliest_on_page:
+                earliest_on_page = start_utc
 
-            # Before target window, note it but keep processing this page
-            if start_utc < target_start:
-                found_before_target = True
-                continue
+            # Check if this appointment falls within our target window
+            if target_start <= start_utc <= target_end:
+                all_in_window.append(appt)
 
-            # Within target day window
-            state = (appt.get("state") or "").lower()
-            no_show = appt.get("no_show", False)
-            title = appt.get("title", "")
+        log.info(f"Page {page} earliest: {earliest_on_page}")
+        log.info(f"Running matches so far: {len(all_in_window)}")
 
-            log.info(f"  {title} | {start_utc} | state={state}")
-
-            if state not in ("cancelled", "canceled") and not no_show and title in INCLUDED_TITLES:
-                log.info(f"  -> MATCHED")
-                target_appointments.append(appt)
-
-        # If we saw appointments before the target window, no point paginating further
-        if found_before_target:
-            log.info("Found appointments before target window. Done paginating.")
+        # If the earliest appointment on this page is before our target start,
+        # then we've fully passed through the target window. Done.
+        if earliest_on_page and earliest_on_page < target_start:
+            log.info("Earliest on page is before target start. Done paginating.")
             break
 
         next_page = data.get("data", {}).get("next_page")
@@ -117,7 +114,22 @@ def get_target_appointments():
             break
         page = next_page
 
-    return target_appointments, target
+    # Step 2: Filter to only the appointment types we care about.
+    matched = []
+    for appt in all_in_window:
+        state = (appt.get("state") or "").lower()
+        no_show = appt.get("no_show", False)
+        title = appt.get("title", "")
+
+        if state in ("cancelled", "canceled") or no_show:
+            continue
+        if title not in INCLUDED_TITLES:
+            continue
+
+        matched.append(appt)
+        log.info(f"MATCHED: {title} | {appt.get('start_time')} | {appt.get('staff_display_name')}")
+
+    return matched, target
 
 
 def send_slack_message(msg):
