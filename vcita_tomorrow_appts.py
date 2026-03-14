@@ -1,6 +1,5 @@
 """
-Brute force: Ramsay Poindexter, every single appointment, find March 19 2026.
-No date filters. No sort tricks. Just paginate everything.
+Brute force: Ben Thompson, every single appointment, find March 18 2026.
 """
 
 import os
@@ -21,7 +20,7 @@ VCITA_TOKEN = (os.environ.get("VCITA_TOKEN") or "").strip()
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 VCITA_API_BASE = "https://api.vcita.biz/platform/v1/scheduling"
 
-RAMSAY = "qr87s9jbo5zwyruq"
+BEN = "dgj09ekwfjtj0r59"
 
 INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
 
@@ -53,13 +52,12 @@ def main():
         sys.exit(1)
 
     now_et = datetime.now(ET)
-    target = now_et.replace(year=2026, month=3, day=19, hour=0, minute=0, second=0, microsecond=0)
+    target = now_et.replace(year=2026, month=3, day=18, hour=0, minute=0, second=0, microsecond=0)
     target_start = target.astimezone(timezone.utc)
     target_end = target.replace(hour=23, minute=59, second=59).astimezone(timezone.utc)
 
-    log.info(f"Target: 2026-03-19 UTC: {target_start} to {target_end}")
-    log.info(f"Staff: Ramsay ({RAMSAY})")
-    log.info("Brute forcing every page. No limits.")
+    log.info(f"Target: 2026-03-18 UTC: {target_start} to {target_end}")
+    log.info(f"Staff: Ben Thompson ({BEN})")
 
     matched = []
     total_fetched = 0
@@ -72,7 +70,7 @@ def main():
         data = vcita_get("/appointments", {
             "per_page": "25",
             "page": str(page),
-            "staff_id": RAMSAY,
+            "staff_id": BEN,
         })
 
         appts = data.get("data", {}).get("appointments", [])
@@ -102,9 +100,9 @@ def main():
             break
         page = next_page
 
-    log.info(f"FINAL: {len(matched)} matches out of {total_fetched} total Ramsay appointments across {page} pages")
+    log.info(f"FINAL: {len(matched)} matches out of {total_fetched} total Ben appointments across {page} pages")
 
-    msg = f"Ramsay brute force: {len(matched)} Tinnitus Relief Consultation(s) on March 19. Scanned {total_fetched} appointments across {page} pages."
+    msg = f"Ben brute force: {len(matched)} Tinnitus Relief Consultation(s) on March 18. Scanned {total_fetched} appointments across {page} pages."
     payload = json.dumps({"text": msg}).encode()
     req = Request(SLACK_WEBHOOK_URL, data=payload)
     req.add_header("Content-Type", "application/json")
