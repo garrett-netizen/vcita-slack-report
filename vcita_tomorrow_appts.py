@@ -125,9 +125,9 @@ def main():
 
     tomorrow_label = tomorrow.strftime("%A, %b %-d")
 
-    msg = f"""📅 *vCita Appointments -- {tomorrow_label}*
+    msg = f"""📅 *Tinnitus Relief Discovery Calls -- {tomorrow_label}*
 
-*Tomorrow's Scheduled Consultations: {total}*"""
+*{total} discovery calls scheduled for tomorrow.*"""
 
     log.info(f"Sending to Slack:\n{msg}")
     status = send_slack_message(msg)
