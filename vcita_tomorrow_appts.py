@@ -1,39 +1,29 @@
 """
-vcita Tomorrow Appointments -> Slack
-Runs daily at 7pm ET. Counts tomorrow's scheduled appointments and posts to Slack.
-
-NOTE: vCita API caps per_page at 25 and sort order is unreliable.
-We must paginate through all pages to find appointments for a given day.
+vCita API probe: test undocumented filter parameters.
 """
 
 import os
 import sys
 import json
 import logging
-from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
-ET = ZoneInfo("America/New_York")
-
 VCITA_TOKEN = (os.environ.get("VCITA_TOKEN") or "").strip()
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 VCITA_API_BASE = "https://api.vcita.biz/platform/v1/scheduling"
 
-INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
-
 
 def vcita_get(endpoint, params=None):
-    """Make an authenticated GET request to vCita API."""
     url = f"{VCITA_API_BASE}{endpoint}"
     if params:
         query = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"{url}?{query}"
 
+    log.info(f"GET {url}")
     req = Request(url)
     req.add_header("Authorization", f"Bearer {VCITA_TOKEN}")
     req.add_header("Content-Type", "application/json")
@@ -44,107 +34,81 @@ def vcita_get(endpoint, params=None):
             return json.loads(resp.read().decode())
     except HTTPError as e:
         body = e.read().decode() if e.fp else ""
-        log.error(f"vCita API error {e.code}: {body}")
-        raise
+        log.error(f"HTTP {e.code}: {body[:500]}")
+        return None
 
 
-def fetch_all_appointments():
-    """Fetch every appointment from the vCita API across all pages."""
-    all_appts = []
-    page = 1
-    max_pages = 200  # safety valve
-
-    while page <= max_pages:
-        log.info(f"Fetching page {page}...")
-        data = vcita_get("/appointments", {
-            "per_page": "25",
-            "page": str(page),
-        })
-
-        appointments = data.get("data", {}).get("appointments", [])
-        if not appointments:
-            break
-
-        all_appts.extend(appointments)
-
-        next_page = data.get("data", {}).get("next_page")
-        if not next_page:
-            break
-        page = next_page
-
-    log.info(f"Total appointments fetched: {len(all_appts)}")
-    return all_appts
-
-
-def filter_appointments(all_appts, target):
-    """Filter appointments to a specific day and matching titles."""
-    target_start = target.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    target_end = target.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
-
-    matched = []
-    for appt in all_appts:
-        start_str = appt.get("start_time", "")
-        if not start_str:
-            continue
-
-        start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-
-        if not (target_start <= start_utc <= target_end):
-            continue
-
-        state = (appt.get("state") or "").lower()
-        no_show = appt.get("no_show", False)
-        title = appt.get("title", "")
-
-        if state in ("cancelled", "canceled") or no_show:
-            continue
-        if title not in INCLUDED_TITLES:
-            continue
-
-        matched.append(appt)
-        log.info(f"MATCHED: {title} | {start_str} | {appt.get('staff_display_name')}")
-
-    return matched
-
-
-def send_slack_message(msg):
-    """Post a message to Slack via incoming webhook."""
-    payload = json.dumps({"text": msg}).encode()
-    req = Request(SLACK_WEBHOOK_URL, data=payload)
-    req.add_header("Content-Type", "application/json")
-    with urlopen(req) as resp:
-        return resp.status
+def test_params(label, params):
+    log.info(f"=== TEST: {label} ===")
+    data = vcita_get("/appointments", params)
+    if data is None:
+        log.info("FAILED (error)")
+        return
+    appts = data.get("data", {}).get("appointments", [])
+    meta = {k: v for k, v in data.get("data", {}).items() if k != "appointments"}
+    log.info(f"Got {len(appts)} appointments. Meta: {json.dumps(meta)}")
+    if appts:
+        log.info(f"First: {appts[0].get('title')} | {appts[0].get('start_time')}")
+        log.info(f"Last: {appts[-1].get('title')} | {appts[-1].get('start_time')}")
 
 
 def main():
     if not VCITA_TOKEN:
         log.error("VCITA_TOKEN not set")
         sys.exit(1)
-    if not SLACK_WEBHOOK_URL:
-        log.error("SLACK_WEBHOOK_URL not set")
-        sys.exit(1)
 
-    now_et = datetime.now(ET)
+    # Test 1: staff_id filter (Ramsay Poindexter)
+    test_params("staff_id=qr87s9jbo5zwyruq", {
+        "per_page": "25",
+        "page": "1",
+        "staff_id": "qr87s9jbo5zwyruq",
+    })
 
-    # TEMP: Override to Wednesday March 18 for testing. Revert to tomorrow after test.
-    target = now_et.replace(year=2026, month=3, day=18, hour=0, minute=0, second=0, microsecond=0)
+    # Test 2: start_time_from / start_time_to
+    test_params("start_time_from/to March 18", {
+        "per_page": "25",
+        "page": "1",
+        "start_time_from": "2026-03-18T00:00:00Z",
+        "start_time_to": "2026-03-19T00:00:00Z",
+    })
 
-    log.info(f"Target: {target.strftime('%A, %b %-d')}")
+    # Test 3: from/to (shorter param names)
+    test_params("from/to March 18", {
+        "per_page": "25",
+        "page": "1",
+        "from": "2026-03-18T00:00:00Z",
+        "to": "2026-03-19T00:00:00Z",
+    })
 
-    all_appts = fetch_all_appointments()
-    appointments = filter_appointments(all_appts, target)
-    total = len(appointments)
+    # Test 4: start_date / end_date
+    test_params("start_date/end_date March 18", {
+        "per_page": "25",
+        "page": "1",
+        "start_date": "2026-03-18",
+        "end_date": "2026-03-18",
+    })
 
-    target_label = target.strftime("%A, %b %-d")
+    # Test 5: date_from / date_to
+    test_params("date_from/date_to March 18", {
+        "per_page": "25",
+        "page": "1",
+        "date_from": "2026-03-18",
+        "date_to": "2026-03-18",
+    })
 
-    msg = f"""📅 *Tinnitus Relief Discovery Calls -- {target_label}*
+    # Test 6: service_id filter (Tinnitus Relief Consultation)
+    test_params("service_id=rs869fhcozi2442v", {
+        "per_page": "25",
+        "page": "1",
+        "service_id": "rs869fhcozi2442v",
+    })
 
-*{total} discovery calls scheduled for tomorrow.*"""
-
-    log.info(f"Sending to Slack:\n{msg}")
-    status = send_slack_message(msg)
-    log.info(f"Slack response: {status}")
-    log.info("Done.")
+    # Send completion notice
+    payload = json.dumps({"text": "API probe complete. Check deploy logs."}).encode()
+    req = Request(SLACK_WEBHOOK_URL, data=payload)
+    req.add_header("Content-Type", "application/json")
+    with urlopen(req) as resp:
+        log.info(f"Slack: {resp.status}")
 
 
 if __name__ == "__main__":
