@@ -61,7 +61,6 @@ def get_target_appointments():
 
     target_appointments = []
     page = 1
-    passed_target = False
 
     while True:
         log.info(f"Fetching appointments page {page}...")
@@ -78,6 +77,8 @@ def get_target_appointments():
         if not appointments:
             break
 
+        found_before_target = False
+
         for appt in appointments:
             start_str = appt.get("start_time", "")
             if not start_str:
@@ -85,14 +86,14 @@ def get_target_appointments():
 
             start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
 
-            # Still above target window, skip
+            # After target window, skip
             if start_utc > target_end:
                 continue
 
-            # Below target window, we're done
+            # Before target window, note it but keep processing this page
             if start_utc < target_start:
-                passed_target = True
-                break
+                found_before_target = True
+                continue
 
             # Within target day window
             state = (appt.get("state") or "").lower()
@@ -105,8 +106,9 @@ def get_target_appointments():
                 log.info(f"  -> MATCHED")
                 target_appointments.append(appt)
 
-        if passed_target:
-            log.info("Passed target window. Stopping.")
+        # If we saw appointments before the target window, no point paginating further
+        if found_before_target:
+            log.info("Found appointments before target window. Done paginating.")
             break
 
         next_page = data.get("data", {}).get("next_page")
