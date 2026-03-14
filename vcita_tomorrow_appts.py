@@ -20,7 +20,7 @@ ET = ZoneInfo("America/New_York")
 VCITA_TOKEN = (os.environ.get("VCITA_TOKEN") or "").strip()
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 VCITA_API_BASE = "https://api.vcita.biz/platform/v1/scheduling"
-PER_PAGE = 25
+PER_PAGE = 100
 
 INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
 
@@ -68,7 +68,7 @@ def get_target_appointments():
             "per_page": str(PER_PAGE),
             "page": str(page),
             "sort": "start_time",
-            "order": "desc",
+            "order": "asc",
         })
 
         appointments = data.get("data", {}).get("appointments", [])
@@ -82,26 +82,27 @@ def get_target_appointments():
             if not start_str:
                 continue
 
-            # Parse start_time (comes as ISO 8601 UTC)
             start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
 
-            log.info(f"  {appt.get('title')} | {start_utc} | state={appt.get('state')}")
-
-            # If appointment is before target day, we are done (sorted desc)
+            # Skip anything before target day
             if start_utc < target_start:
-                log.info("Reached appointments before target day. Stopping.")
+                continue
+
+            # Past target day, no need to keep going
+            if start_utc > target_end:
+                log.info("Passed target day. Stopping.")
                 return target_appointments, target
 
-            # If appointment is within target day's window
-            if target_start <= start_utc <= target_end:
-                state = (appt.get("state") or "").lower()
-                no_show = appt.get("no_show", False)
-                title = appt.get("title", "")
+            # Within target day window
+            state = (appt.get("state") or "").lower()
+            no_show = appt.get("no_show", False)
+            title = appt.get("title", "")
 
-                # Only count scheduled/confirmed consultations
-                if state not in ("cancelled", "canceled") and not no_show and title in INCLUDED_TITLES:
-                    log.info(f"  -> MATCHED: {title}")
-                    target_appointments.append(appt)
+            log.info(f"  {title} | {start_utc} | state={state}")
+
+            if state not in ("cancelled", "canceled") and not no_show and title in INCLUDED_TITLES:
+                log.info(f"  -> MATCHED")
+                target_appointments.append(appt)
 
         next_page = data.get("data", {}).get("next_page")
         if not next_page:
