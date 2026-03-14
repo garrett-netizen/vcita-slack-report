@@ -71,6 +71,7 @@ def get_tomorrow_appointments():
             break
 
         for appt in appointments:
+            log.info(json.dumps(appt, indent=2))
             start_str = appt.get("start_time", "")
             if not start_str:
                 continue
