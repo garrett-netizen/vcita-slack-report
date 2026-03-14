@@ -1,20 +1,38 @@
 """
-Find Diana's staff_id. Paginate until we see her name. Stop immediately when found.
+vcita Tomorrow Appointments -> Slack
+Runs daily at 7pm ET. Counts tomorrow's Tinnitus Relief Discovery Calls and posts to Slack.
+
+Brute forces all appointments per staff member (vCita API has no reliable
+date filtering or sort). Filters to target date + matching titles in code.
+~60-90 seconds per staff member, ~4-6 minutes total.
 """
 
 import os
 import sys
 import json
 import logging
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
+ET = ZoneInfo("America/New_York")
+
 VCITA_TOKEN = (os.environ.get("VCITA_TOKEN") or "").strip()
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 VCITA_API_BASE = "https://api.vcita.biz/platform/v1/scheduling"
+
+STAFF = {
+    "Ramsay Poindexter": "qr87s9jbo5zwyruq",
+    "Ben Thompson": "dgj09ekwfjtj0r59",
+    "Garrett Thompson": "w2bdnhp0nwkbxaz4",
+    "Diana Vetere": "nqk7nya8tvbo1qp6",
+}
+
+INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
 
 
 def vcita_get(endpoint, params=None):
@@ -31,58 +49,96 @@ def vcita_get(endpoint, params=None):
             return json.loads(resp.read().decode())
     except HTTPError as e:
         body = e.read().decode() if e.fp else ""
-        log.error(f"HTTP {e.code}: {body[:500]}")
-        return None
+        log.error(f"vCita API error {e.code}: {body}")
+        raise
+
+
+def get_staff_appointments(staff_name, staff_id, target_start, target_end):
+    """Brute force all appointments for one staff member, return matches in target window."""
+    matched = []
+    page = 1
+
+    while True:
+        if page % 50 == 0:
+            log.info(f"  {staff_name}: page {page}...")
+
+        data = vcita_get("/appointments", {
+            "per_page": "25",
+            "page": str(page),
+            "staff_id": staff_id,
+        })
+
+        appts = data.get("data", {}).get("appointments", [])
+        if not appts:
+            break
+
+        for a in appts:
+            start_str = a.get("start_time", "")
+            if not start_str:
+                continue
+            start_utc = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+
+            if target_start <= start_utc <= target_end:
+                title = a.get("title", "")
+                state = (a.get("state") or "").lower()
+                no_show = a.get("no_show", False)
+
+                if title in INCLUDED_TITLES and state not in ("cancelled", "canceled") and not no_show:
+                    matched.append(a)
+                    log.info(f"  MATCHED: {title} | {start_str} | {staff_name}")
+
+        next_page = data.get("data", {}).get("next_page")
+        if not next_page:
+            break
+        page = next_page
+
+    log.info(f"  {staff_name}: {len(matched)} match(es), {page} pages scanned")
+    return matched
+
+
+def send_slack_message(msg):
+    payload = json.dumps({"text": msg}).encode()
+    req = Request(SLACK_WEBHOOK_URL, data=payload)
+    req.add_header("Content-Type", "application/json")
+    with urlopen(req) as resp:
+        return resp.status
 
 
 def main():
     if not VCITA_TOKEN:
         log.error("VCITA_TOKEN not set")
         sys.exit(1)
+    if not SLACK_WEBHOOK_URL:
+        log.error("SLACK_WEBHOOK_URL not set")
+        sys.exit(1)
 
-    staff = {}
-    page = 1
-    found_diana = False
+    now_et = datetime.now(ET)
 
-    while True:
-        if page % 25 == 0:
-            log.info(f"Page {page}, staff found so far: {len(staff)}")
+    # TEMP: Override to Thursday March 19 for testing. Revert to tomorrow after test.
+    target = now_et.replace(year=2026, month=3, day=19, hour=0, minute=0, second=0, microsecond=0)
 
-        d = vcita_get("/appointments", {"per_page": "25", "page": str(page)})
-        if not d:
-            break
-        appts = d.get("data", {}).get("appointments", [])
-        if not appts:
-            break
+    target_start = target.astimezone(timezone.utc)
+    target_end = target.replace(hour=23, minute=59, second=59).astimezone(timezone.utc)
+    target_label = target.strftime("%A, %b %-d")
 
-        for a in appts:
-            name = a.get("staff_display_name", "")
-            sid = a.get("staff_id", "")
-            if name and name not in staff:
-                staff[name] = sid
-                log.info(f"NEW: {name} -> {sid}")
-                if "diana" in name.lower() or "vetere" in name.lower():
-                    found_diana = True
+    log.info(f"Target: {target_label} (UTC: {target_start} to {target_end})")
 
-        if found_diana:
-            log.info("Found Diana. Stopping.")
-            break
+    all_matched = []
+    for name, sid in STAFF.items():
+        log.info(f"Scanning {name}...")
+        matches = get_staff_appointments(name, sid, target_start, target_end)
+        all_matched.extend(matches)
 
-        next_page = d.get("data", {}).get("next_page")
-        if not next_page:
-            break
-        page = next_page
+    total = len(all_matched)
 
-    log.info(f"=== ALL STAFF ({len(staff)}) after {page} pages ===")
-    for name, sid in sorted(staff.items()):
-        log.info(f"  {name} -> {sid}")
+    msg = f"""📅 *Tinnitus Relief Discovery Calls -- {target_label}*
 
-    msg = "Staff IDs:\n" + "\n".join(f"{name}: {sid}" for name, sid in sorted(staff.items()))
-    payload = json.dumps({"text": msg}).encode()
-    req = Request(SLACK_WEBHOOK_URL, data=payload)
-    req.add_header("Content-Type", "application/json")
-    with urlopen(req) as resp:
-        log.info(f"Slack: {resp.status}")
+*{total} discovery calls scheduled for tomorrow.*"""
+
+    log.info(f"Sending to Slack:\n{msg}")
+    status = send_slack_message(msg)
+    log.info(f"Slack response: {status}")
+    log.info("Done.")
 
 
 if __name__ == "__main__":
