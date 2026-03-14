@@ -136,22 +136,17 @@ def main():
 
     now_et = datetime.now(ET)
 
-    # TEMP: Override to Wed March 18 and Thu March 19 for testing.
-    wed = now_et.replace(year=2026, month=3, day=18, hour=0, minute=0, second=0, microsecond=0)
-    thu = now_et.replace(year=2026, month=3, day=19, hour=0, minute=0, second=0, microsecond=0)
+    # TEMP: Override to Wednesday March 18 for testing. Revert to tomorrow after test.
+    target = now_et.replace(year=2026, month=3, day=18, hour=0, minute=0, second=0, microsecond=0)
 
-    log.info("=== Fetching Wednesday March 18 ===")
-    wed_appts = get_appointments_for_date(wed)
-    log.info("=== Fetching Thursday March 19 ===")
-    thu_appts = get_appointments_for_date(thu)
+    appointments = get_appointments_for_date(target)
+    total = len(appointments)
 
-    wed_label = wed.strftime("%A, %b %-d")
-    thu_label = thu.strftime("%A, %b %-d")
+    target_label = target.strftime("%A, %b %-d")
 
-    msg = f"""📅 *Tinnitus Relief Discovery Calls*
+    msg = f"""📅 *Tinnitus Relief Discovery Calls -- {target_label}*
 
-*{wed_label}:* {len(wed_appts)} discovery calls
-*{thu_label}:* {len(thu_appts)} discovery calls"""
+*{total} discovery calls scheduled for tomorrow.*"""
 
     log.info(f"Sending to Slack:\n{msg}")
     status = send_slack_message(msg)
