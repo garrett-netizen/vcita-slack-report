@@ -1,7 +1,11 @@
 """
 vcita Staff Appointment Scanner
-Scans one staff member's vCita appointments for tomorrow's discovery calls.
+Scans one staff member's vCita appointments for the next business day's discovery calls.
 Posts results to #vcita-data-dump Slack channel as structured JSON.
+
+Next business day logic:
+  Mon-Thu -> scans tomorrow (Tue-Fri)
+  Fri/Sat/Sun -> scans Monday
 
 Deploy as 4 separate Railway cron services, each with a different STAFF_NAME env var:
   - Ramsay Poindexter
@@ -9,7 +13,7 @@ Deploy as 4 separate Railway cron services, each with a different STAFF_NAME env
   - Garrett Thompson
   - Diana Vetere
 
-Cron: 6:30am ET (10:30 UTC) = 30 10 * * *
+Cron: 7:00am ET (11:00 UTC) = 0 11 * * *
 
 Env vars needed:
   - VCITA_TOKEN: vCita API bearer token
@@ -45,6 +49,17 @@ STAFF_IDS = {
 }
 
 INCLUDED_TITLES = {"Tinnitus Relief Consultation", "Hyperacusis Consultation"}
+
+
+def next_business_day(dt):
+    """Return the next business day (Mon-Fri) after today."""
+    tomorrow = dt + timedelta(days=1)
+    weekday = tomorrow.weekday()
+    if weekday == 5:      # Saturday -> Monday
+        return tomorrow + timedelta(days=2)
+    elif weekday == 6:    # Sunday -> Monday
+        return tomorrow + timedelta(days=1)
+    return tomorrow       # Mon-Fri -> next day
 
 
 def vcita_get(endpoint, params=None):
@@ -134,14 +149,14 @@ def main():
 
     staff_id = STAFF_IDS[STAFF_NAME]
     now_et = datetime.now(ET)
-    tomorrow = now_et + timedelta(days=1)
+    target = next_business_day(now_et)
 
-    target = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
-    target_start = target.astimezone(timezone.utc)
-    target_end = target.replace(hour=23, minute=59, second=59).astimezone(timezone.utc)
-    target_date = target.strftime("%Y-%m-%d")
+    target_day = target.replace(hour=0, minute=0, second=0, microsecond=0)
+    target_start = target_day.astimezone(timezone.utc)
+    target_end = target_day.replace(hour=23, minute=59, second=59).astimezone(timezone.utc)
+    target_date = target_day.strftime("%Y-%m-%d")
 
-    log.info(f"Target: {target_date} (tomorrow)")
+    log.info(f"Target: {target_date} (next business day)")
     log.info(f"Staff: {STAFF_NAME} ({staff_id})")
 
     matches = get_staff_appointments(STAFF_NAME, staff_id, target_start, target_end)
