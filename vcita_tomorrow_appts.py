@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 ET = ZoneInfo("America/New_York")
 
-VCITA_TOKEN = os.environ.get("VCITA_TOKEN")
+VCITA_TOKEN = (os.environ.get("VCITA_TOKEN") or "").strip()
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 VCITA_API_BASE = "https://api.vcita.biz/platform/v1/scheduling"
 PER_PAGE = 25
@@ -33,6 +33,7 @@ def vcita_get(endpoint, params=None):
     req = Request(url)
     req.add_header("Authorization", f"Bearer {VCITA_TOKEN}")
     req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", "Mozilla/5.0")
 
     try:
         with urlopen(req) as resp:
