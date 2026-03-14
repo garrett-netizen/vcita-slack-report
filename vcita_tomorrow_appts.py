@@ -46,26 +46,16 @@ def vcita_get(endpoint, params=None):
         raise
 
 
-def get_target_appointments():
-    """Fetch all appointments scheduled for the target day (ET)."""
-    now_et = datetime.now(ET)
-
-    # TEMP: Override to Tuesday March 17 for testing. Revert to tomorrow after test.
-    target = now_et.replace(year=2026, month=3, day=17, hour=0, minute=0, second=0, microsecond=0)
-
-    # Target day boundaries in UTC
+def get_appointments_for_date(target):
+    """Fetch all matching appointments for a specific date (ET)."""
     target_start = target.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
     target_end = target.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
 
     log.info(f"Target window (UTC): {target_start} to {target_end}")
 
-    # Step 1: Fetch ALL appointments into a flat list.
-    # The API doesn't support date filtering, so we paginate through everything.
-    # We sort descending so the newest are first, and stop once the entire page
-    # is older than our target window.
     all_in_window = []
     page = 1
-    max_pages = 50  # safety valve
+    max_pages = 50
 
     while page <= max_pages:
         log.info(f"Fetching page {page}...")
@@ -82,7 +72,6 @@ def get_target_appointments():
         if not appointments:
             break
 
-        # Track the earliest start_time on this page
         earliest_on_page = None
 
         for appt in appointments:
@@ -95,15 +84,12 @@ def get_target_appointments():
             if earliest_on_page is None or start_utc < earliest_on_page:
                 earliest_on_page = start_utc
 
-            # Check if this appointment falls within our target window
             if target_start <= start_utc <= target_end:
                 all_in_window.append(appt)
 
         log.info(f"Page {page} earliest: {earliest_on_page}")
         log.info(f"Running matches so far: {len(all_in_window)}")
 
-        # If the earliest appointment on this page is before our target start,
-        # then we've fully passed through the target window. Done.
         if earliest_on_page and earliest_on_page < target_start:
             log.info("Earliest on page is before target start. Done paginating.")
             break
@@ -114,7 +100,6 @@ def get_target_appointments():
             break
         page = next_page
 
-    # Step 2: Filter to only the appointment types we care about.
     matched = []
     for appt in all_in_window:
         state = (appt.get("state") or "").lower()
@@ -129,7 +114,7 @@ def get_target_appointments():
         matched.append(appt)
         log.info(f"MATCHED: {title} | {appt.get('start_time')} | {appt.get('staff_display_name')}")
 
-    return matched, target
+    return matched
 
 
 def send_slack_message(msg):
@@ -149,14 +134,24 @@ def main():
         log.error("SLACK_WEBHOOK_URL not set")
         sys.exit(1)
 
-    appointments, target = get_target_appointments()
-    total = len(appointments)
+    now_et = datetime.now(ET)
 
-    target_label = target.strftime("%A, %b %-d")
+    # TEMP: Override to Wed March 18 and Thu March 19 for testing.
+    wed = now_et.replace(year=2026, month=3, day=18, hour=0, minute=0, second=0, microsecond=0)
+    thu = now_et.replace(year=2026, month=3, day=19, hour=0, minute=0, second=0, microsecond=0)
 
-    msg = f"""📅 *Tinnitus Relief Discovery Calls -- {target_label}*
+    log.info("=== Fetching Wednesday March 18 ===")
+    wed_appts = get_appointments_for_date(wed)
+    log.info("=== Fetching Thursday March 19 ===")
+    thu_appts = get_appointments_for_date(thu)
 
-*{total} discovery calls scheduled for tomorrow.*"""
+    wed_label = wed.strftime("%A, %b %-d")
+    thu_label = thu.strftime("%A, %b %-d")
+
+    msg = f"""📅 *Tinnitus Relief Discovery Calls*
+
+*{wed_label}:* {len(wed_appts)} discovery calls
+*{thu_label}:* {len(thu_appts)} discovery calls"""
 
     log.info(f"Sending to Slack:\n{msg}")
     status = send_slack_message(msg)
