@@ -120,6 +120,10 @@ def get_staff_appointments(staff_name, staff_id, target_start, target_end):
                         "start_time": start_str,
                         "staff": staff_name,
                         "client": f"{a.get('client_first_name', '')} {a.get('client_last_name', '')}".strip(),
+                        "client_email": a.get("client_email"),
+                        "client_phone": a.get("client_phone"),
+                        # platform API exposes the client UID as client_id; legacy records use matter_id
+                        "client_id": a.get("client_id") or a.get("matter_id"),
                     })
                     log.info(f"  MATCHED: {title} | {start_str} | {staff_name}")
 
